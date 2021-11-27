@@ -1,0 +1,259 @@
+void applySplit(struct split *split, struct DCEL *dcel) {
+    int isAdjacent;
+    double midpointX;
+    double midpointY;
+    struct halfEdge *startHE;
+    struct halfEdge *endHE;
+    struct halfEdge *newJoinHE;
+    struct halfEdge *newJoinHEPair;
+    struct halfEdge *newStartHEToMid;
+    struct halfEdge *newStartHEToMidPair;
+    struct halfEdge *newMidHEToEnd;
+    struct halfEdge *newMidHEToEndPair;
+    /* Temporary holders for old pair edges */
+    struct halfEdge *oldStartPairPrev;
+    struct halfEdge *oldEndPairNext;
+    /* Temporary holder for old pairs */
+    struct halfEdge *oldStartPair;
+    struct halfEdge *oldEndPair;
+
+    int newVertexMidStart;
+    int newVertexMidEnd;
+    /* The vertex representing the end of the original starting edge */
+    int oldVertexStart;
+    /* The vertex representing the start of the original ending edge */
+    int oldVertexEnd;
+
+    /* Each split creates exactly 3 edges, so we can set up space for these now.
+     */
+    int joinEdge;
+    int newStartEdge;
+    int newEndEdge;
+
+    ensureSpaceForEdge(dcel);
+    joinEdge = dcel->edgesUsed;
+    dcel->edgesUsed = dcel->edgesUsed + 1;
+
+    ensureSpaceForEdge(dcel);
+    newStartEdge = dcel->edgesUsed;
+    dcel->edgesUsed = dcel->edgesUsed + 1;
+
+    ensureSpaceForEdge(dcel);
+    newEndEdge = dcel->edgesUsed;
+    dcel->edgesUsed = dcel->edgesUsed + 1;
+
+    /* Get vertices for MidStart and MidEnd */
+    ensureSpaceForVertex(dcel);
+    newVertexMidStart = dcel->verticesUsed;
+    dcel->verticesUsed = dcel->verticesUsed + 1;
+
+    ensureSpaceForVertex(dcel);
+    newVertexMidEnd = dcel->verticesUsed;
+    dcel->verticesUsed = dcel->verticesUsed + 1;
+
+    /* Work out what half-edges we need to use. */
+    startHE = (dcel->edges)[split->startEdge].halfEdge;
+    endHE = (dcel->edges)[split->endEdge].halfEdge;
+
+    /* Set midpoint of start */
+    double startX = (dcel->vertices)[startHE->startVertex].x;
+    double startY = (dcel->vertices)[startHE->startVertex].y;
+    double endX = (dcel->vertices)[startHE->endVertex].x;
+    double endY = (dcel->vertices)[startHE->endVertex].y;
+    if (split->verticesSpecified) {
+        /* See if vertex needs to be reused */
+        if (vertexMatch(&(dcel->vertices)[startHE->endVertex],
+                        &split->startSplitPoint)) {
+            newVertexMidStart = startHE->endVertex;
+        } else if (vertexMatch(&(dcel->vertices)[startHE->startVertex],
+                               &split->startSplitPoint)) {
+            newVertexMidStart = startHE->startVertex;
+        } else {
+            (dcel->vertices)[newVertexMidStart].x = split->startSplitPoint.x;
+            (dcel->vertices)[newVertexMidStart].y = split->startSplitPoint.y;
+        }
+    } else {
+        (dcel->vertices)[newVertexMidStart].x = (startX + endX) / 2.0;
+        (dcel->vertices)[newVertexMidStart].y = (startY + endY) / 2.0;
+    }
+
+    /* Set midpoint of end */
+    startX = (dcel->vertices)[endHE->startVertex].x;
+    startY = (dcel->vertices)[endHE->startVertex].y;
+    endX = (dcel->vertices)[endHE->endVertex].x;
+    endY = (dcel->vertices)[endHE->endVertex].y;
+    if (split->verticesSpecified) {
+        /* See if vertex needs to be reused */
+        if (vertexMatch(&(dcel->vertices)[endHE->startVertex],
+                        &split->endSplitPoint)) {
+            newVertexMidEnd = endHE->startVertex;
+        } else if (vertexMatch(&(dcel->vertices)[endHE->endVertex],
+                               &split->endSplitPoint)) {
+            newVertexMidEnd = endHE->endVertex;
+        } else {
+            (dcel->vertices)[newVertexMidEnd].x = split->endSplitPoint.x;
+            (dcel->vertices)[newVertexMidEnd].y = split->endSplitPoint.y;
+        }
+    } else {
+        (dcel->vertices)[newVertexMidEnd].x = (startX + endX) / 2.0;
+        (dcel->vertices)[newVertexMidEnd].y = (startY + endY) / 2.0;
+    }
+
+    /* Get point halfway between both midpoints */
+    double x1 = (dcel->vertices)[newVertexMidStart].x;
+    double x2 = (dcel->vertices)[newVertexMidEnd].x;
+    double y1 = (dcel->vertices)[newVertexMidStart].y;
+    double y2 = (dcel->vertices)[newVertexMidEnd].y;
+    midpointX = (x1 + x2) / 2.0;
+    midpointY = (y1 + y2) / 2.0;
+
+    /* Work out whether on correct side. */
+    struct vertex *v1 = &((dcel->vertices)[startHE->startVertex]);
+    struct vertex *v2 = &((dcel->vertices)[startHE->endVertex]);
+    if (getRelativeDir(midpointX, midpointY, v1, v2) == OUTSIDE) {
+        startHE = startHE->pair;
+    }
+    v1 = &((dcel->vertices)[endHE->startVertex]);
+    v2 = &((dcel->vertices)[endHE->endVertex]);
+    if (getRelativeDir(midpointX, midpointY, v1, v2) == OUTSIDE) {
+        endHE = endHE->pair;
+    }
+
+    /* Work out whether edges are adjacent. */
+    if (startHE->next == endHE) {
+        isAdjacent = 1;
+    } else {
+        isAdjacent = 0;
+    }
+
+    /* Store old prev and next from start and end edges for convenience */
+    struct halfEdge *oldEndPrev = endHE->prev;
+    struct halfEdge *oldStartNext = startHE->next;
+    oldVertexEnd = endHE->startVertex;
+    oldVertexStart = startHE->endVertex;
+
+    /* Update vertices of endHE and startHE */
+    endHE->startVertex = newVertexMidEnd;
+    startHE->endVertex = newVertexMidStart;
+
+    /* Add bridging edges */
+    newJoinHE = newHalfEdge();
+
+    newJoinHE->startVertex = newVertexMidStart;
+    newJoinHE->endVertex = newVertexMidEnd;
+    newJoinHE->next = endHE;
+    endHE->prev = newJoinHE;
+    newJoinHE->prev = startHE;
+    startHE->next = newJoinHE;
+    newJoinHE->pair = NULL; // Will be set later
+    /* joinHE is same face as startHE and endHE */
+    newJoinHE->face = startHE->face;
+    newJoinHE->edge = joinEdge;
+
+    /* Set joinEdge to relevant halfEdge */
+    (dcel->edges)[joinEdge].halfEdge = newJoinHE;
+
+    newJoinHEPair = newHalfEdge();
+    /* Pair is in opposite direction. */
+    newJoinHEPair->startVertex = newVertexMidEnd;
+    newJoinHEPair->endVertex = newVertexMidStart;
+    newJoinHEPair->next = NULL; // Will join to new HEs
+    newJoinHEPair->prev = NULL; // Will join to new HEs
+    newJoinHEPair->pair = newJoinHE;
+    newJoinHE->pair = newJoinHEPair;
+    newJoinHEPair->face = NOFACE; // Will be new face set later
+    newJoinHEPair->edge = joinEdge;
+
+    /* Set up what we can of new edges */
+    newStartHEToMid = newHalfEdge();
+    newStartHEToMid->startVertex = newVertexMidStart;
+    newStartHEToMid->endVertex = oldVertexStart;
+    newStartHEToMid->next =
+        NULL; // Different setting based on adjacency, set below.
+    newStartHEToMid->prev = newJoinHEPair;
+    newJoinHEPair->next = newStartHEToMid;
+    newStartHEToMid->pair = NULL;   // Will be set up later if needed.
+    newStartHEToMid->face = NOFACE; // Will be new face set later
+    newStartHEToMid->edge = newStartEdge;
+
+    /* Set newStartEdge to relevant halfEdge */
+    (dcel->edges)[newStartEdge].halfEdge = newStartHEToMid;
+
+    newMidHEToEnd = newHalfEdge();
+    newMidHEToEnd->startVertex = oldVertexEnd;
+    newMidHEToEnd->endVertex = newVertexMidEnd;
+    newMidHEToEnd->next = newJoinHEPair;
+    newJoinHEPair->prev = newMidHEToEnd;
+    newMidHEToEnd->prev =
+        NULL; // Different setting based on adjacency, set below.
+    newMidHEToEnd->pair = NULL; // Will be set up later if needed.
+    newMidHEToEnd->face = NOFACE;
+    newMidHEToEnd->edge = newEndEdge;
+
+    /* Set newEndEdge to relevant halfEdge */
+    (dcel->edges)[newEndEdge].halfEdge = newMidHEToEnd;
+
+    /* If either start or end HEs have paired Half-Edges, we also need to split
+     * those. */
+    if (startHE->pair) {
+        oldStartPairPrev = startHE->pair->prev;
+        oldStartPair = startHE->pair;
+
+        newStartHEToMidPair = newHalfEdge();
+        /* Reverse of pair */
+        newStartHEToMidPair->startVertex = oldVertexStart;
+        newStartHEToMidPair->endVertex = newVertexMidStart;
+        newStartHEToMidPair->next = oldStartPair;
+        newStartHEToMidPair->prev = oldStartPairPrev;
+        startHE->pair->prev = newStartHEToMidPair;
+        oldStartPair->prev = newStartHEToMidPair;
+        oldStartPair->startVertex = newVertexMidStart;
+        oldStartPairPrev->next = newStartHEToMidPair;
+        newStartHEToMid->pair = newStartHEToMidPair;
+        newStartHEToMidPair->pair = newStartHEToMid;
+        newStartHEToMidPair->face = startHE->pair->face;
+        newStartHEToMidPair->edge = newStartEdge;
+    } else {
+        newStartHEToMidPair = NULL;
+    }
+    if (endHE->pair) {
+        oldEndPairNext = endHE->pair->next;
+        oldEndPair = endHE->pair;
+
+        newMidHEToEndPair = newHalfEdge();
+        newMidHEToEndPair->startVertex = newVertexMidEnd;
+        newMidHEToEndPair->endVertex = oldVertexEnd;
+        newMidHEToEndPair->next = oldEndPairNext; // endHE->pair ?
+        oldEndPair->next = newMidHEToEndPair;
+        oldEndPairNext->prev = newMidHEToEndPair; // Next?
+        oldEndPair->endVertex = newVertexMidEnd;
+        newMidHEToEndPair->prev = oldEndPair;
+        newMidHEToEnd->pair = newMidHEToEndPair;
+        newMidHEToEndPair->pair = newMidHEToEnd;
+        newMidHEToEndPair->face = endHE->pair->face;
+        newMidHEToEndPair->edge = newEndEdge;
+    } else {
+        newMidHEToEndPair = NULL;
+    }
+
+    /* Set up remaining edges. */
+    if (isAdjacent) {
+        newStartHEToMid->next = newMidHEToEnd;
+        newMidHEToEnd->prev = newStartHEToMid;
+    } else {
+        /* Edges are old start and end edges (maybe the same edge). */
+        newStartHEToMid->next = oldStartNext;
+        oldStartNext->prev = newStartHEToMid;
+        newMidHEToEnd->prev = oldEndPrev;
+        oldEndPrev->next = newMidHEToEnd;
+    }
+
+    /* Setup new face. */
+    addFace(dcel, newJoinHEPair);
+
+    /* Check if face has overwritten other face */
+    int joinFace = startHE->face;
+    if ((dcel->faces)[joinFace].he->face != joinFace) {
+        (dcel->faces)[joinFace].he = startHE;
+    }
+}
